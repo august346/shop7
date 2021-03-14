@@ -3,8 +3,9 @@ import time
 from datetime import datetime
 from functools import lru_cache, partial, wraps
 from http import HTTPStatus
-from typing import List, Dict, Any, Iterable, Union, Callable
+from typing import List, Dict, Any, Iterable, Union, Callable, Tuple
 
+import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 from requests import Response
@@ -46,6 +47,9 @@ class Collector:
     def get_row_updates(self, row: dict) -> Dict[str, Any]:
         raise NotImplementedError
 
+    def get_dataframes(self, document: dict) -> Iterable[Tuple[str, pd.DataFrame]]:
+        raise NotImplementedError
+
 
 class TestCollector(Collector):
 
@@ -60,6 +64,9 @@ class TestCollector(Collector):
             'name': f'name_#{row["id"]}',
             'not_name': f'not_name_#{row["id"]}',
         }
+
+    def get_dataframes(self, rows: dict) -> Iterable[Tuple[str, pd.DataFrame]]:
+        yield 'test', pd.DataFrame(rows)
 
 
 class WbFinDoc(Collector):

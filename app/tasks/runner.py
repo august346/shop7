@@ -1,8 +1,9 @@
 from logging import Logger
-from typing import List, Dict, Type
+from typing import List, Dict, Type, Optional
 
 from bson import ObjectId
 
+from utils import State
 from .collector import Collector, TestCollector, WbFinDoc
 import mongo
 
@@ -16,48 +17,46 @@ def get_runner(report: dict) -> 'Runner':
 
 
 class Runner:
-    collector: Collector
-    rows: List[dict]
+    _id: str
+    _collector: Collector
+    _rows: List[dict]
 
     def __init__(self, collector: Collector):
-        self.collector = collector
-        self._filter = {'_id': ObjectId(collector.report['_id'])}
+        self._id = collector.report['_id']
+        self._collector = collector
+        self._filter = {'_id': ObjectId(self._id)}
+
+        self._upd_document(State.process)
 
     def run(self):
-        mongo.client.db.reports.update_one(
-            self._filter,
-            {'$set': {'state': 'process'}}
-        )
-        logger.warning(f'process: {self._filter["_id"]}')
+        self._collect()
+        self._update()
+        # self.generate()
 
-        mongo.client.db.reports.update_one(
-            self._filter,
-            {'$set': self.get_rows()}
-        )
-        logger.warning(f'collected: {self._filter["_id"]}')
+        self._upd_document(State.complete)
 
-        mongo.client.db.reports.update_one(
-            self._filter,
-            {'$set': self.get_updates()}
-        )
-        logger.warning(f'updated: {self._filter["_id"]}')
+    def _upd_document(self, state: State, to_set: Optional[dict] = None):
+        to_set = to_set or {}
+        to_set['state'] = state.value
 
-    def get_rows(self) -> dict:
-        self.rows = self.collector.get_rows()
+        mongo.client.db.reports.update_one(self._filter, {'$set': to_set})
+        logger.warning(f'{state}: {self._filter["_id"]}')
 
-        return {
-            'rows': self.rows,
-            'state': 'collected'
-        }
+    def _collect(self) -> None:
+        self._rows = self._collector.get_rows()
+        self._upd_document(State.collected, {'rows': self._rows})
 
-    def get_updates(self) -> dict:
-        updates = {'state': 'updated'}
+    def _update(self) -> None:
+        updates = {}
 
-        for ind, row in enumerate(self.rows):
-            for name, value in self.collector.get_row_updates(row).items():
+        for ind, row in enumerate(self._rows):
+            for name, value in self._collector.get_row_updates(row).items():
                 updates[f'rows.{ind}.{name}'] = value
 
-        return updates
+        self._upd_document(State.updated, updates)
+
+    def generate(self) -> None:
+        raise NotImplemented
 
 
 platforms: Dict[str, Dict[str, Type[Collector]]] = {

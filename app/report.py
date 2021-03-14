@@ -6,6 +6,7 @@ from bson import ObjectId
 from flask import request
 
 import mongo
+from utils import State
 
 CREATE_FIELDS = ('platform', 'doc_type', 'date_from', 'date_to')
 
@@ -27,7 +28,7 @@ def create():
         key: request.form.get(key)
         for key in CREATE_FIELDS
     }
-    fields['state'] = 'init'
+    fields['state'] = State.init.value
     fields['files'] = {key: file.filename for key, file in request.files.items()}
     result = {'_id': None, **fields}
 
@@ -44,4 +45,3 @@ def valid_create_fields(fields: Dict[str, Any]):
     valid['date_to'] = datetime.fromisoformat(valid['date_to'])
 
     return valid
-

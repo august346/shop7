@@ -47,7 +47,7 @@ class Collector:
     def get_row_updates(self, row: dict) -> Dict[str, Any]:
         raise NotImplementedError
 
-    def get_dataframes(self, document: dict) -> Iterable[Tuple[str, pd.DataFrame]]:
+    def get_dataframes(self, rows: List[dict]) -> Iterable[Tuple[str, pd.DataFrame]]:
         raise NotImplementedError
 
 
@@ -65,7 +65,7 @@ class TestCollector(Collector):
             'not_name': f'not_name_#{row["id"]}',
         }
 
-    def get_dataframes(self, rows: dict) -> Iterable[Tuple[str, pd.DataFrame]]:
+    def get_dataframes(self, rows: List[dict]) -> Iterable[Tuple[str, pd.DataFrame]]:
         yield 'test', pd.DataFrame(rows)
 
 
@@ -163,3 +163,32 @@ class WbFinDoc(Collector):
             raise ResourceWarning(f'Invalid {rsp.request.url=}, {rsp.status_code=} with {rsp.content=}')
 
         return BeautifulSoup(rsp.content.decode('utf-8'), 'html.parser')
+
+    def get_dataframes(self, rows: List[dict]) -> Iterable[Tuple[str, pd.DataFrame]]:
+        df: pd.DataFrame = pd.DataFrame(self._get_unpacked_rows(rows))
+
+        group_fields = ['nm_id', 'barcode', 'sa_name'] + (['name'] if 'name' in df.columns else [])
+
+        total = df.groupby(group_fields).apply(self.get_apply)
+
+        yield 'sum', total.sum()
+        yield 'total', total
+
+        for _id in df.realizationreport_id.unique():
+            yield f'report_{_id}', df.groupby(group_fields).apply(self.get_apply)
+
+    @staticmethod
+    def _get_unpacked_rows(rows: List[dict]) -> Iterable[dict]:
+        for row in rows:
+            for rep in row['reports']:
+                yield {**{key: value for key, value in row.items() if key != 'reports'}, **rep}
+
+    @staticmethod
+    def get_apply(x: pd.DataFrame):
+        return pd.Series(dict(
+            delivery=(x.delivery_rub.where(x.supplier_oper_name == 'Логистика')).sum(),
+            income=(x.supplier_reward.where(x.supplier_oper_name == 'Продажа')).sum(),
+            income_number=(x.quantity.where(x.supplier_oper_name == 'Продажа')).sum(),
+            refund=(x.supplier_reward.where(x.supplier_oper_name == 'Возврат')).sum(),
+            refund_number=(x.quantity.where(x.supplier_oper_name == 'Возврат')).sum(),
+        ))

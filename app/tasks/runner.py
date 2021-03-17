@@ -1,8 +1,11 @@
+import io
 from logging import Logger
 from typing import List, Dict, Type, Optional
 
 from bson import ObjectId
+import pandas as pd
 
+import storage
 from utils import State
 from .collector import Collector, TestCollector, WbFinDoc
 import mongo
@@ -30,8 +33,8 @@ class Runner:
 
     def run(self):
         self._collect()
-        self._update()
-        # self.generate()
+        # self._update()
+        self._generate()
 
         self._upd_document(State.complete)
 
@@ -51,12 +54,22 @@ class Runner:
 
         for ind, row in enumerate(self._rows):
             for name, value in self._collector.get_row_updates(row).items():
-                updates[f'rows.{ind}.{name}'] = value
+                updates[f'rows.{ind}.{name}'] = row['name'] = value
 
         self._upd_document(State.updated, updates)
 
-    def generate(self) -> None:
-        raise NotImplemented
+    def _generate(self) -> None:
+        file_id = self._id
+
+        output: io.BytesIO = io.BytesIO()
+
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            for sheet_name, df in self._collector.get_dataframes(self._rows):
+                df.to_excel(writer, sheet_name)
+            writer.save()
+
+        output.seek(0, 0)
+        storage.save(storage.Bucket.reports, file_id, output)
 
 
 platforms: Dict[str, Dict[str, Type[Collector]]] = {

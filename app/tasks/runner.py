@@ -33,7 +33,7 @@ class Runner:
 
     def run(self):
         self._collect()
-        # self._update()
+        self._update()
         self._generate()
 
         self._upd_document(State.complete)

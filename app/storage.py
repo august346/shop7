@@ -16,7 +16,7 @@ class Bucket(Enum):
 
 
 client = Minio(
-    'localhost:9000',
+    os.environ.get('MINIO_URL', 'localhost:9000'),
     access_key=os.environ['MINIO_ACCESS_KEY'],
     secret_key=os.environ['MINIO_SECRET_KEY'],
     secure=False

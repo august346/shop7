@@ -35,3 +35,31 @@ services:
     command: server /data
     ports:
       - 9000:9000
+
+  flask:
+    build:
+      context: .
+      dockerfile: flask.Dockerfile
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - 5000:80
+    links:
+      - mongo
+      - rabbitmq
+      - redis
+      - minio
+
+  celery:
+    build:
+      context: .
+      dockerfile: celery.Dockerfile
+    restart: always
+    env_file:
+      - .env
+    links:
+      - mongo
+      - rabbitmq
+      - redis
+      - minio

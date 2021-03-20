@@ -1,5 +1,4 @@
 import hashlib
-import io
 from copy import copy
 from datetime import datetime, date
 from enum import Enum

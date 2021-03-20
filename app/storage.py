@@ -1,7 +1,6 @@
 import io
 import os
 from enum import Enum
-from typing import Optional
 
 from minio import Minio, S3Error
 

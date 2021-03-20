@@ -1,5 +1,6 @@
 import os
 import time
+from collections import defaultdict
 from datetime import datetime
 from functools import lru_cache, partial, wraps
 from http import HTTPStatus
@@ -9,6 +10,8 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 from requests import Response
+
+import storage
 
 
 def paused(f: Callable = None, seconds: float = 1):
@@ -164,31 +167,71 @@ class WbFinDoc(Collector):
 
         return BeautifulSoup(rsp.content.decode('utf-8'), 'html.parser')
 
+    uniques: pd.DataFrame
+    df: pd.DataFrame
+
     def get_dataframes(self, rows: List[dict]) -> Iterable[Tuple[str, pd.DataFrame]]:
-        df: pd.DataFrame = pd.DataFrame(self._get_unpacked_rows(rows))
+        self.df: pd.DataFrame = pd.DataFrame(self._get_unpacked_rows(rows))
 
-        group_fields = ['nm_id', 'barcode', 'sa_name'] + (['name'] if 'name' in df.columns else [])
+        yield 'sum', self._sum
+        yield 'total', self._total
 
-        total = df.groupby(group_fields).apply(self.get_apply)
+        for rid in self.df.realizationreport_id.unique():
+            yield f'report_{rid}', self._get_realization(rid)
 
-        yield 'sum', total.sum()
-        yield 'total', total
+    def _get_unpacked_rows(self, rows: List[dict]) -> Iterable[dict]:
+        main: List[dict] = []
 
-        for _id in df.realizationreport_id.unique():
-            yield f'report_{_id}', df.groupby(group_fields).apply(self.get_apply)
-
-    @staticmethod
-    def _get_unpacked_rows(rows: List[dict]) -> Iterable[dict]:
         for row in rows:
+            uniques: Dict[str, Any] = {key: value for key, value in row.items() if key != 'reports'}
             for rep in row['reports']:
-                yield {**{key: value for key, value in row.items() if key != 'reports'}, **rep}
+                yield {**uniques, **rep}
+            main.append(uniques)
+
+        self.uniques = pd.DataFrame(main)
+
+        if (costs_file_id := self.report.get('files', {}).get('costs')) is None:
+            return
+
+        self.uniques = self.uniques.join(
+            pd.read_excel(storage.get(storage.Bucket.files, costs_file_id).data).groupby('nm_id').max(),
+            on='nm_id',
+            how='left'
+        )
+
+    @property
+    def _sum(self) -> pd.DataFrame:
+        columns: List[str] = list(filter(
+            lambda x: x in self._total.columns,
+            ['n_sold', 'sold', 'n_refund', 'refund', 'delivery', 'price', 'income']
+        ))
+        return self._total[columns].sum()
+
+    @property
+    @lru_cache
+    def _total(self) -> pd.DataFrame:
+        return self._full(self.df.groupby('nm_id').apply(self._get_apply))
+
+    def _full(self, df: pd.DataFrame) -> pd.DataFrame:
+        full: pd.DataFrame = self.uniques.join(df, on='nm_id', how='inner')
+
+        if 'cost' in self.uniques.columns:
+            full['price'] = full['cost'] * full['n_sold']
+            full['income'] = full['sold'] - (full['price'] + full['refund'] + full['delivery'])
+
+        return full
+
+    def _get_realization(self, rid: int):
+        return self._full(self.df[self.df.realizationreport_id == rid].groupby('nm_id').apply(self._get_apply))
 
     @staticmethod
-    def get_apply(x: pd.DataFrame):
-        return pd.Series(dict(
-            delivery=(x.delivery_rub.where(x.supplier_oper_name == 'Логистика')).sum(),
-            income=(x.supplier_reward.where(x.supplier_oper_name == 'Продажа')).sum(),
-            income_number=(x.quantity.where(x.supplier_oper_name == 'Продажа')).sum(),
-            refund=(x.supplier_reward.where(x.supplier_oper_name == 'Возврат')).sum(),
-            refund_number=(x.quantity.where(x.supplier_oper_name == 'Возврат')).sum(),
-        ))
+    def _get_apply(x: pd.DataFrame) -> pd.Series:
+        return pd.Series(
+            dict(
+                n_sold=x.quantity.where(x.supplier_oper_name == 'Продажа').sum(),
+                sold=x.supplier_reward.where(x.supplier_oper_name == 'Продажа').sum(),
+                n_refund=x.quantity.where(x.supplier_oper_name == 'Возврат').sum(),
+                refund=x.supplier_reward.where(x.supplier_oper_name == 'Возврат').sum(),
+                delivery=x.delivery_rub.where(x.supplier_oper_name == 'Логистика').sum()
+            )
+        )

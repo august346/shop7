@@ -3,8 +3,7 @@ import io
 from copy import copy
 from datetime import datetime, date
 from enum import Enum
-from typing import Dict, Any, Union, Tuple, Optional
-from uuid import uuid4
+from typing import Dict, Any, Tuple
 
 from bson import ObjectId
 from flask import request
@@ -76,10 +75,7 @@ def get_files() -> Dict[str, str]:
     result = {}
 
     for key, file in request.files.items():
-        name = '{md5}.{fmt}'.format(
-            md5=hashlib.md5(file.read()).hexdigest(),
-            fmt=fmt[-1] if len(fmt := file.filename.split('.')) > 1 else ''
-        )
+        name = hashlib.md5(file.read()).hexdigest()
         file.seek(0)
 
         storage.save(

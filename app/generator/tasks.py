@@ -1,9 +1,16 @@
 from functools import wraps
-from typing import Callable
+from typing import Callable, Dict, Tuple, Type
 
 from celery import shared_task
 
-from tasks.runner import get_runner
+from . import test, wb
+from .base import ETL
+
+
+ETL_BUILDERS: Dict[Tuple[str, str], Type[ETL]] = {
+    ('test', 'fin_month'): test.TestETL,
+    ('wb', 'fin_month'): wb.WbFinMonthETL
+}
 
 
 def mongo_init_before(f: Callable):
@@ -20,5 +27,5 @@ def mongo_init_before(f: Callable):
 
 @shared_task(name="app.process")
 @mongo_init_before
-def process(info: dict):
-    get_runner(info).run()
+def process(_id: str, platform: str, doc_type: str):
+    ETL_BUILDERS[(platform, doc_type)](_id).run()

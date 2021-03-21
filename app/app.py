@@ -2,12 +2,12 @@ from http import HTTPStatus
 
 from flask import abort, jsonify, Response
 
-import report
-import utils
-from tasks import tasks
+from report import get, create
+from generator import tasks
+from utils import Fmts, create_app, make_celery
 
-app = utils.create_app(__name__)
-celery = utils.make_celery(app)
+app = create_app(__name__)
+celery = make_celery(app)
 
 
 @app.route('/')
@@ -17,9 +17,9 @@ def index():
 
 @app.route('/reports/<string:_id>/', methods=['GET'])
 def read_report(_id: str):
-    fmt, data = report.get(_id)
+    fmt, data = get(_id)
 
-    if fmt == report.Fmt.xlsx.value:
+    if fmt == Fmts.xlsx:
         if not data:
             abort(HTTPStatus.NOT_ACCEPTABLE, f'Not ready')
         return Response(
@@ -27,7 +27,7 @@ def read_report(_id: str):
             headers=dict(data.headers),
             direct_passthrough=True
         )
-    elif fmt == report.Fmt.json.value:
+    elif fmt == Fmts.json:
         return jsonify(data)
 
     abort(HTTPStatus.BAD_REQUEST, f'Unknown fmt: `{fmt}`')
@@ -35,6 +35,6 @@ def read_report(_id: str):
 
 @app.route('/reports/', methods=['POST'])
 def create_report():
-    data = report.create()
-    tasks.process.delay(data)
-    return jsonify(data['_id'])
+    _id, platform, doc_type = create()
+    tasks.process.delay(_id, platform, doc_type)
+    return jsonify(_id)

@@ -1,7 +1,5 @@
 import hashlib
-from copy import copy
 from datetime import datetime, date
-from enum import Enum
 from typing import Dict, Any, Tuple
 
 from bson import ObjectId
@@ -9,22 +7,17 @@ from flask import request
 
 import mongo
 import storage
-from utils import State
+from utils import States, Fmts
 
-CREATE_FIELDS = ('platform', 'doc_type', 'date_from', 'date_to')
-
-
-class Fmt(Enum):
-    json = 'json'
-    xlsx = 'xlsx'
+NECESSARY_CREATE_FIELDS = ('platform', 'doc_type', 'date_from', 'date_to')
 
 
 def get(_id: str) -> Tuple[str, Any]:
     fmt = request.args.get('fmt') or 'json'
 
-    if fmt == Fmt.json.value:
+    if fmt == Fmts.json:
         return fmt, _get_json(_id)
-    elif fmt == Fmt.xlsx.value:
+    elif fmt == Fmts.xlsx:
         return fmt, _get_file(_id)
 
     return fmt, None
@@ -46,24 +39,23 @@ def _get_file(_id: str):
     return storage.get(storage.Bucket.reports, _id)
 
 
-def create():
-    fields = {
-        key: request.form.get(key)
-        for key in CREATE_FIELDS
+def create() -> Tuple[str, str, str]:
+    result = {
+        'state': States.init,
+        'files': get_files(),
+        **valid_create_fields(),
     }
-    fields['state'] = State.init.value
-    fields['files'] = get_files()
-    result = {'_id': None, **fields}
 
-    valid_fields = valid_create_fields(fields)
+    oid = str(mongo.client.db.reports.insert_one(result).inserted_id)
 
-    result['_id'] = str(mongo.client.db.reports.insert_one(valid_fields).inserted_id)
-
-    return result
+    return str(oid), result['platform'], result['doc_type']
 
 
-def valid_create_fields(fields: Dict[str, Any]):
-    valid = copy(fields)
+def valid_create_fields():
+    valid = {
+        key: request.form[key]
+        for key in NECESSARY_CREATE_FIELDS
+    }
     valid['date_from'] = datetime.fromisoformat(valid['date_from'])
     valid['date_to'] = datetime.fromisoformat(valid['date_to'])
 

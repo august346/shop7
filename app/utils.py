@@ -1,17 +1,20 @@
-from enum import Enum
-
 from celery import Celery
 from flask import Flask
 
 import mongo
 
 
-class State(Enum):
+class States:
     init = 'init'
-    process = 'process'
-    collected = 'collected'
-    updated = 'updated'
+    extracted = 'extracted'
+    transformed = 'transformed'
+    loaded = 'loaded'
     complete = 'complete'
+
+
+class Fmts:
+    json = 'json'
+    xlsx = 'xlsx'
 
 
 def make_celery(app):

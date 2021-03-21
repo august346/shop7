@@ -1,18 +1,17 @@
 import io
 import os
-from enum import Enum
 
 from minio import Minio, S3Error
 
 
-class Bucket(Enum):
+class Bucket:
     files = 'files'
     reports = 'reports'
 
     @classmethod
     def get_bucket_names(cls):
-        yield cls.files.value
-        yield cls.reports.value
+        yield cls.files
+        yield cls.reports
 
 
 client = Minio(
@@ -31,7 +30,7 @@ def save(bucket: Bucket, name: str, file: io.BytesIO) -> None:
     size = file.getbuffer().nbytes
 
     client.put_object(
-        bucket_name=bucket.value,
+        bucket_name=bucket,
         object_name=name,
         data=file,
         length=size,
@@ -41,6 +40,6 @@ def save(bucket: Bucket, name: str, file: io.BytesIO) -> None:
 
 def get(bucket: Bucket, file_id: str):
     try:
-        return client.get_object(bucket.value, file_id)
+        return client.get_object(bucket, file_id)
     except S3Error:
         return None

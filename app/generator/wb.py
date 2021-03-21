@@ -1,114 +1,51 @@
 import os
-import time
-from datetime import datetime
-from functools import lru_cache, partial, wraps
+from functools import lru_cache
 from http import HTTPStatus
-from typing import List, Dict, Any, Iterable, Union, Callable, Tuple
+from typing import Iterable, Dict, Union, Tuple, List, Any
 
-import pandas as pd
 import requests
+import pandas as pd
 from bs4 import BeautifulSoup
-from requests import Response
 
 import storage
+from .base import ETL, Extractor, Transformer, Loader
+from .utils import paused
 
 
-def paused(f: Callable = None, seconds: float = 1):
-    if not f:
-        return partial(paused, seconds=seconds)
-
-    @wraps(f)
-    def wrapper(*args, **kwargs):
-        await_time = time.time()
-
-        if wrapper.previous_timestamp:
-            await_time = wrapper.previous_timestamp + seconds
-
-        while await_time > time.time():
-            time.sleep(0.1)
-
-        result = f(*args, **kwargs)
-        wrapper.previous_timestamp = time.time()
-
-        return result
-
-    wrapper.previous_timestamp = None
-
-    return wrapper
-
-
-class Collector:
-    report: dict
-
-    def __init__(self, report: dict):
-        self.report = report
-
-    def get_rows(self) -> List[dict]:
-        raise NotImplementedError
-
-    def get_row_updates(self, row: dict) -> Dict[str, Any]:
-        raise NotImplementedError
-
-    def get_dataframes(self, rows: List[dict]) -> Iterable[Tuple[str, pd.DataFrame]]:
-        raise NotImplementedError
-
-
-class TestCollector(Collector):
-
-    def get_rows(self) -> List[dict]:
-        return [{
-            'id': i,
-            'data': f'test_#{i}'
-        } for i in range(10)]
-
-    def get_row_updates(self, row: dict) -> Dict[str, Any]:
-        return {
-            'name': f'name_#{row["id"]}',
-            'not_name': f'not_name_#{row["id"]}',
-        }
-
-    def get_dataframes(self, rows: List[dict]) -> Iterable[Tuple[str, pd.DataFrame]]:
-        yield 'test', pd.DataFrame(rows)
-
-
-class WbFinDoc(Collector):
-    api_key: str = os.environ['WB_API_KEY']
-    url: str = 'https://suppliers-stats.wildberries.ru/api/v1/supplier/reportDetailByPeriod'
-    sleep_between: int = 1
-    common_keys = ('nm_id', 'barcode', 'sa_name')
-    unique_keys = (
+class WbFinMonthExtractor(Extractor):
+    _url: str = 'https://suppliers-stats.wildberries.ru/api/v1/supplier/reportDetailByPeriod'
+    _wb_key: str = os.environ['WB_API_KEY']
+    common_keys: Tuple[str] = ('nm_id', 'barcode', 'sa_name')
+    unique_keys: Tuple[str] = (
         'realizationreport_id', 'order_dt', 'sale_dt', 'supplier_reward', 'supplier_oper_name', 'quantity',
         'delivery_rub'
     )
 
     def get_rows(self) -> List[dict]:
-        return self._get_aggregated()
-
-    def _get_aggregated(self) -> List[dict]:
-        result: Dict[str, dict] = {}
+        rows: Dict[str, dict] = {}
 
         for data in self._get_payloads():
             nm_id: str = data['nm_id']
 
-            if nm_id not in result:
-                result[nm_id] = self._get_common_fields(data)
-                result[nm_id]['reports'] = []
+            if nm_id not in rows:
+                rows[nm_id] = self._get_common_fields(data)
+                rows[nm_id]['reports'] = []
 
-            result[nm_id]['reports'].append(self._get_unique_fields(data))
+            rows[nm_id]['reports'].append(self._get_unique_fields(data))
 
-        return list(result.values())
+        return list(rows.values())
 
-    def _get_common_fields(self, data: dict) -> Dict[str, Union[str, int, float]]:
-        return {k: data[k] for k in self.common_keys}
+    def _get_common_fields(self, sell_info: dict) -> Dict[str, Union[str, int, float]]:
+        return {k: sell_info[k] for k in self.common_keys}
 
-    def _get_unique_fields(self, data: dict):
-        return {k: data[k] for k in self.unique_keys}
+    def _get_unique_fields(self, sell_info: dict):
+        return {k: sell_info[k] for k in self.unique_keys}
 
     def _get_payloads(self) -> Iterable[Dict[str, Union[str, int, float]]]:
         _id = 0
 
         while _id is not None:
-            rsp: Response = self._do_request(_id)
+            rsp: requests.Response = self._do_request(_id)
             assert rsp.status_code == HTTPStatus.OK, (rsp, rsp.content.decode(), rsp.request.url)
 
             json = rsp.json()
@@ -120,30 +57,35 @@ class WbFinDoc(Collector):
 
             _id = max([p['rrd_id'] for p in json])
 
-            time.sleep(self.sleep_between)
-
-    def _do_request(self, _id) -> Response:
+    @paused(seconds=1)
+    def _do_request(self, _id) -> requests.Response:
         return requests.get(
-            self.url,
+            self._url,
             params=dict(
-                key=self.api_key,
+                key=self._wb_key,
                 limit=1000,
                 rrdid=_id,
-                dateFrom=datetime.fromisoformat(self.report['date_from']).isoformat(),
-                dateTo=datetime.fromisoformat(self.report['date_to']).isoformat()
+                dateFrom=self._date_from,
+                dateTo=self._date_to
             )
         )
 
-    def get_row_updates(self, row: dict) -> Dict[str, Any]:
-        return {
-            'name': self._get_name(row['nm_id'])
-        }
 
-    @staticmethod
+class WbFinMonthTransformer(Transformer):
+
+    def get_transforms(self) -> Dict[str, Any]:
+        transforms: Dict[str, Any] = {}
+
+        for ind, row in enumerate(self._rows):
+            name_key, name_value = 'name', self._get_name(row['nm_id'])
+            transforms[f'rows.{ind}.{name_key}'] = row[name_key] = name_value
+
+        return transforms
+
     @lru_cache(maxsize=5000)
     @paused(seconds=1)
-    def _get_name(nm_id: str) -> 'str':
-        tag = WbFinDoc._get_soup(nm_id).find(
+    def _get_name(self, nm_id: str) -> 'str':
+        tag = self._get_soup(nm_id).find(
             'span',
             {'class': 'name'}
         )
@@ -166,11 +108,13 @@ class WbFinDoc(Collector):
 
         return BeautifulSoup(rsp.content.decode('utf-8'), 'html.parser')
 
+
+class WbFinMonthLoader(Loader):
     uniques: pd.DataFrame
     df: pd.DataFrame
 
-    def get_dataframes(self, rows: List[dict]) -> Iterable[Tuple[str, pd.DataFrame]]:
-        self.df: pd.DataFrame = pd.DataFrame(self._get_unpacked_rows(rows))
+    def get_dataframes(self) -> Iterable[Tuple[str, pd.DataFrame]]:
+        self.df: pd.DataFrame = pd.DataFrame(self._get_unpacked_rows(self._rows))
 
         yield 'sum', self._sum
         yield 'total', self._total
@@ -189,11 +133,13 @@ class WbFinDoc(Collector):
 
         self.uniques = pd.DataFrame(main)
 
-        if (costs_file_id := self.report.get('files', {}).get('costs')) is None:
+        if self._costs_file_id is None:
             return
 
         self.uniques = self.uniques.join(
-            pd.read_excel(storage.get(storage.Bucket.files, costs_file_id).data).groupby('nm_id').max(),
+            other=pd.read_excel(
+                storage.get(storage.Bucket.files, self._costs_file_id).data
+            ).groupby('nm_id').max(),
             on='nm_id',
             how='left'
         )
@@ -234,3 +180,9 @@ class WbFinDoc(Collector):
                 delivery=x.delivery_rub.where(x.supplier_oper_name == 'Логистика').sum()
             )
         )
+
+
+class WbFinMonthETL(ETL):
+    _extractor_builder = WbFinMonthExtractor
+    _transformer_builder = WbFinMonthTransformer
+    _loader_builder = WbFinMonthLoader

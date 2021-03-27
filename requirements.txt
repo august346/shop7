@@ -1,7 +1,6 @@
 amqp==5.0.5
 beautifulsoup4==4.9.3
 billiard==3.6.3.0
-bs4==0.0.1
 celery==5.0.5
 certifi==2020.12.5
 cffi==1.14.5

@@ -9,7 +9,7 @@ from bs4 import BeautifulSoup
 
 import storage
 from .base import ETL, Extractor, Transformer, Loader
-from .utils import paused
+from .utils import paused, translate
 
 
 class WbFinMonthExtractor(Extractor):
@@ -77,10 +77,17 @@ class WbFinMonthTransformer(Transformer):
         transforms: Dict[str, Any] = {}
 
         for ind, row in enumerate(self._rows):
-            name_key, name_value = 'name', self._get_name(row['nm_id'])
-            transforms[f'rows.{ind}.{name_key}'] = row[name_key] = name_value
+            link_key, link_value = 'link', self._get_link(row['nm_id'])
+            transforms[f'rows.{ind}.{link_key}'] = row[link_key] = link_value
 
         return transforms
+
+    def _get_link(self, nm_id: str) -> 'str':
+        return f'=HYPERLINK("{self._get_url(nm_id)}", "WB-{nm_id}")'
+
+    @staticmethod
+    def _get_url(nm_id: str) -> 'str':
+        return f'https://www.wildberries.ru/catalog/{nm_id}/detail.aspx'
 
     @lru_cache(maxsize=5000)
     @paused(seconds=1)
@@ -93,10 +100,9 @@ class WbFinMonthTransformer(Transformer):
             return text.strip() if (text := tag.text) else text
         raise ValueError('No span_class_name in response!')
 
-    @staticmethod
-    def _get_soup(nm_id: str) -> BeautifulSoup:
+    def _get_soup(self, nm_id: str) -> BeautifulSoup:
         rsp = requests.get(
-            f'https://www.wildberries.ru/catalog/{nm_id}/detail.aspx',
+            url=self._get_url(nm_id),
             headers={
                 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) '
                               'Chrome/39.0.2171.95 Safari/537.36 '
@@ -116,11 +122,11 @@ class WbFinMonthLoader(Loader):
     def get_dataframes(self) -> Iterable[Tuple[str, pd.DataFrame]]:
         self.df: pd.DataFrame = pd.DataFrame(self._get_unpacked_rows(self._rows))
 
-        yield 'sum', self._sum
-        yield 'total', self._total
+        yield translate('sum'), self._sum
+        yield translate('total'), self._total
 
         for rid in self.df.realizationreport_id.unique():
-            yield f'report_{rid}', self._get_realization(rid)
+            yield f'{translate("report")} {rid}', self._get_realization(rid)
 
     def _get_unpacked_rows(self, rows: List[dict]) -> Iterable[dict]:
         main: List[dict] = []

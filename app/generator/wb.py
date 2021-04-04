@@ -15,7 +15,7 @@ from .utils import paused, translate
 class WbFinMonthExtractor(Extractor):
     _url: str = 'https://suppliers-stats.wildberries.ru/api/v1/supplier/reportDetailByPeriod'
     _wb_key: str = os.environ['WB_API_KEY']
-    common_keys: Tuple[str] = ('nm_id', 'barcode', 'sa_name')
+    common_keys: Tuple[str] = ('nm_id', 'brand', 'barcode', 'sa_name')
     unique_keys: Tuple[str] = (
         'realizationreport_id', 'order_dt', 'sale_dt', 'supplier_reward', 'supplier_oper_name', 'quantity',
         'delivery_rub'
